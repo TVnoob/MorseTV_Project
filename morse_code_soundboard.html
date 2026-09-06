@@ -1,0 +1,969 @@
+<!DOCTYPE html>
+<html lang="ja" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Morse Code Virtual Audio Soundboard</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        radio: {
+                            bg: '#0a0e17',
+                            card: '#131c2e',
+                            border: '#2a3854',
+                            accent: '#10b981',
+                            amber: '#f59e0b',
+                            red: '#ef4444',
+                            cyan: '#06b6d4'
+                        }
+                    },
+                    fontFamily: {
+                        mono: ['Courier New', 'Courier', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        /* Custom scrollbar and glow effects */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #0a0e17;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #2a3854;
+            border-radius: 3px;
+        }
+        .glow-green {
+            box-shadow: 0 0 15px rgba(16, 185, 129, 0.4);
+        }
+        .glow-red {
+            box-shadow: 0 0 15px rgba(239, 68, 68, 0.5);
+        }
+        .led-active {
+            animation: pulse-led 1s infinite alternate;
+        }
+        @keyframes pulse-led {
+            from { opacity: 0.6; transform: scale(0.95); }
+            to { opacity: 1; transform: scale(1.05); }
+        }
+    </style>
+</head>
+<body class="bg-radio-bg text-slate-200 min-h-screen font-sans flex flex-col justify-between selection:bg-radio-accent selection:text-black">
+
+    <!-- Header -->
+    <header class="border-b border-radio-border bg-radio-card/80 backdrop-blur sticky top-0 z-50 px-4 py-3">
+        <div class="max-w-7xl mx-auto flex flex-wrap justify-between items-center gap-4">
+            <div class="flex items-center gap-3">
+                <div class="p-2 bg-radio-accent/10 border border-radio-accent/30 rounded-lg text-radio-accent">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/>
+                    </svg>
+                </div>
+                <div>
+                    <h1 class="font-bold text-lg text-white tracking-wide flex items-center gap-2">
+                        CW MORSE VIRTUAL SOUNDBOARD
+                        <span class="text-xs font-mono px-2 py-0.5 rounded bg-radio-accent/20 text-radio-accent border border-radio-accent/40">v2.5</span>
+                    </h1>
+                    <p class="text-xs text-slate-400">マイク入力（VB-Audio Cable等）へ直接モールス音を出力するツール</p>
+                </div>
+            </div>
+
+            <!-- TX Indicator & Quick Controls -->
+            <div class="flex items-center gap-4">
+                <div class="flex items-center gap-2 px-3 py-1.5 bg-black/40 border border-radio-border rounded-lg font-mono text-xs">
+                    <span id="txLed" class="w-3 h-3 rounded-full bg-slate-600 transition-colors"></span>
+                    <span id="txStatusText" class="text-slate-400 font-semibold">STANDBY</span>
+                </div>
+                <button id="guideToggleBtn" class="text-xs bg-radio-border/50 hover:bg-radio-border text-slate-300 px-3 py-1.5 rounded-lg border border-slate-600/50 transition">
+                    ❓ 使い方ガイド
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Notification Toast Modal Container -->
+    <div id="toastContainer" class="fixed top-16 right-4 z-50 flex flex-col gap-2 pointer-events-none"></div>
+
+    <!-- Setup Instructions Banner (Collapsible) -->
+    <div id="guidePanel" class="hidden bg-slate-900/90 border-b border-radio-border p-4 text-sm text-slate-300">
+        <div class="max-w-7xl mx-auto grid md:grid-cols-3 gap-4">
+            <div class="bg-radio-card p-3 rounded-lg border border-radio-border">
+                <div class="font-bold text-radio-accent mb-1">1. 仮想オーディオデバイスの準備</div>
+                <p class="text-xs text-slate-400">「VB-Audio Virtual Cable」等をPCにインストールします。これにより、サウンド出力をマイク入力にリルートできます。</p>
+            </div>
+            <div class="bg-radio-card p-3 rounded-lg border border-radio-border">
+                <div class="font-bold text-radio-cyan mb-1">2. 本アプリでのデバイス設定</div>
+                <p class="text-xs text-slate-400">下記の「出力先デバイス」で「CABLE Input (VB-Audio Virtual Cable)」を選択します。必要に応じて「ローカルモニター」を有効にします。</p>
+            </div>
+            <div class="bg-radio-card p-3 rounded-lg border border-radio-border">
+                <div class="font-bold text-radio-amber mb-1">3. 通話アプリの設定</div>
+                <p class="text-xs text-slate-400">DiscordやOBSの「マイク入力」設定で「CABLE Output (VB-Audio Virtual Cable)」を選択すると、相手にモールス音が直接届きます。</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Workspace -->
+    <main class="max-w-7xl mx-auto px-4 py-6 w-full flex-grow grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+        <!-- LEFT COLUMN: Audio Devices & Sound Parameters (4 cols) -->
+        <section class="lg:col-span-4 flex flex-col gap-6">
+            
+            <!-- Audio Output Routing Card -->
+            <div class="bg-radio-card border border-radio-border rounded-xl p-5 shadow-lg">
+                <h2 class="text-sm font-bold tracking-wider text-radio-accent uppercase flex items-center justify-between mb-4">
+                    <span>オーディオ出力設定</span>
+                    <span class="text-xs font-normal text-slate-400">Audio Routing</span>
+                </h2>
+
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-300 mb-1.5">出力デバイス（マイク側）</label>
+                        <div class="flex gap-2">
+                            <select id="audioOutputSelect" class="flex-grow bg-slate-900 border border-radio-border text-white text-xs rounded-lg p-2.5 focus:ring-1 focus:ring-radio-accent focus:outline-none">
+                                <option value="default">既定のスピーカー (Default Output)</option>
+                            </select>
+                            <button id="btnGrantPermission" title="権限を許可してデバイス一覧を更新" class="bg-radio-accent/20 hover:bg-radio-accent/30 text-radio-accent border border-radio-accent/40 px-3 py-2 rounded-lg text-xs font-bold transition flex items-center gap-1">
+                                🔄 検出
+                            </button>
+                        </div>
+                        <p class="text-[11px] text-slate-400 mt-1">※VB-Cableなどの仮想ケーブル入力を選択してください。</p>
+                    </div>
+
+                    <div class="pt-2 border-t border-radio-border/60 flex items-center justify-between">
+                        <div>
+                            <span class="text-xs font-medium text-slate-300">ローカルモニター (自分のスピーカーにも鳴らす)</span>
+                            <p class="text-[10px] text-slate-400">送信中の音声を自分の耳でも確認します</p>
+                        </div>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" id="localMonitorToggle" class="sr-only peer" checked>
+                            <div class="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-radio-accent"></div>
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Synthesizer Controls Card -->
+            <div class="bg-radio-card border border-radio-border rounded-xl p-5 shadow-lg">
+                <h2 class="text-sm font-bold tracking-wider text-radio-accent uppercase flex items-center justify-between mb-4">
+                    <span>音質 & 速度パラメーター</span>
+                    <span class="text-xs font-normal text-slate-400">CW Tone & Timing</span>
+                </h2>
+
+                <div class="space-y-4">
+                    <!-- Tone Frequency -->
+                    <div>
+                        <div class="flex justify-between text-xs mb-1">
+                            <span class="text-slate-300 font-semibold">トーン周波数 (Hz)</span>
+                            <span id="freqDisplay" class="font-mono text-radio-accent font-bold">700 Hz</span>
+                        </div>
+                        <input type="range" id="freqSlider" min="400" max="1000" step="10" value="700" class="w-full accent-radio-accent cursor-pointer bg-slate-900 rounded-lg">
+                    </div>
+
+                    <!-- Speed WPM -->
+                    <div>
+                        <div class="flex justify-between text-xs mb-1">
+                            <span class="text-slate-300 font-semibold">速度 (WPM - Words Per Min)</span>
+                            <span id="wpmDisplay" class="font-mono text-radio-cyan font-bold">20 WPM</span>
+                        </div>
+                        <input type="range" id="wpmSlider" min="5" max="40" step="1" value="20" class="w-full accent-radio-cyan cursor-pointer bg-slate-900 rounded-lg">
+                    </div>
+
+                    <!-- Volume -->
+                    <div>
+                        <div class="flex justify-between text-xs mb-1">
+                            <span class="text-slate-300 font-semibold">音量 (Master Volume)</span>
+                            <span id="volumeDisplay" class="font-mono text-radio-amber font-bold">80%</span>
+                        </div>
+                        <input type="range" id="volumeSlider" min="0" max="100" step="1" value="80" class="w-full accent-radio-amber cursor-pointer bg-slate-900 rounded-lg">
+                    </div>
+
+                    <!-- Loop Mode -->
+                    <div class="pt-2 border-t border-radio-border/60 flex items-center justify-between">
+                        <span class="text-xs font-medium text-slate-300">ループ再生</span>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" id="loopToggle" class="sr-only peer">
+                            <div class="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-radio-amber"></div>
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Signal Visualizer & Straight Key -->
+            <div class="bg-radio-card border border-radio-border rounded-xl p-5 shadow-lg flex flex-col gap-3">
+                <h2 class="text-sm font-bold tracking-wider text-radio-accent uppercase flex items-center justify-between">
+                    <span>信号オシロスコープ</span>
+                    <span class="text-xs font-normal text-slate-400">Live Visualizer</span>
+                </h2>
+                <!-- Canvas Waveform -->
+                <canvas id="visualizerCanvas" width="300" height="70" class="w-full h-20 bg-slate-950 rounded-lg border border-slate-800"></canvas>
+
+                <!-- Manual Straight Key Button -->
+                <button id="straightKeyBtn" class="mt-1 w-full py-4 bg-slate-800 hover:bg-slate-700 active:bg-radio-red/30 text-slate-200 active:text-radio-red font-bold font-mono rounded-xl border border-slate-700 active:border-radio-red/50 transition-all text-sm shadow-inner flex flex-col items-center justify-center select-none">
+                    <span>電鍵キーイング (手動トーン発振)</span>
+                    <span class="text-[10px] font-normal text-slate-400">クリック長押し または [Space / Enter] キー</span>
+                </button>
+            </div>
+
+        </section>
+
+        <!-- RIGHT COLUMN: Converter & Soundboard Buttons (8 cols) -->
+        <section class="lg:col-span-8 flex flex-col gap-6">
+
+            <!-- Morse Text Encoder & Real-Time Converter -->
+            <div class="bg-radio-card border border-radio-border rounded-xl p-5 shadow-lg flex flex-col gap-4">
+                <div class="flex flex-wrap justify-between items-center gap-2">
+                    <h2 class="text-sm font-bold tracking-wider text-radio-accent uppercase flex items-center gap-2">
+                        <span>テキスト・モールス入力 & 変換</span>
+                    </h2>
+                    <div class="flex items-center gap-2 text-xs">
+                        <button id="modeTextBtn" class="px-3 py-1 rounded-md bg-radio-accent text-black font-bold border border-radio-accent">テキスト (英/ローマ字)</button>
+                        <button id="modeMorseBtn" class="px-3 py-1 rounded-md bg-slate-800 text-slate-400 font-semibold border border-radio-border hover:text-white">直接モールス (./-)</button>
+                    </div>
+                </div>
+
+                <!-- Input Field -->
+                <div>
+                    <textarea id="textInput" rows="3" class="w-full bg-slate-900 border border-radio-border rounded-lg p-3 text-white font-mono text-sm focus:ring-1 focus:ring-radio-accent focus:outline-none resize-none" placeholder="送信したいテキストまたはローマ字を入力... (例: CQ CQ CQ THIS IS JA1YXP)"></textarea>
+                </div>
+
+                <!-- Live Morse Preview Display with Highlight Engine -->
+                <div>
+                    <div class="flex justify-between items-center mb-1 text-xs">
+                        <span class="text-slate-400">モールスコード変換プレビュー:</span>
+                        <button id="btnClearInput" class="text-slate-500 hover:text-slate-300">クリア</button>
+                    </div>
+                    <div id="morseCodeOutput" class="w-full min-h-[70px] bg-slate-950 border border-slate-800 rounded-lg p-3 font-mono text-sm leading-relaxed tracking-wider break-words flex flex-wrap gap-x-2 gap-y-1">
+                        <span class="text-slate-600 italic text-xs">テキストを入力するとここにコードが表示されます...</span>
+                    </div>
+                </div>
+
+                <!-- Playback Control Actions Bar -->
+                <div class="flex flex-wrap items-center gap-3 pt-2">
+                    <button id="btnPlay" class="flex-1 bg-radio-accent hover:bg-emerald-400 text-black font-bold py-3 px-6 rounded-lg shadow-lg hover:shadow-radio-accent/20 transition flex items-center justify-center gap-2 text-sm uppercase tracking-wider">
+                        <svg class="w-5 h-5 fill-current" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                        <span>送信開始 (PLAY TX)</span>
+                    </button>
+
+                    <button id="btnStop" class="bg-radio-red/20 hover:bg-radio-red/30 text-radio-red border border-radio-red/40 font-bold py-3 px-5 rounded-lg transition flex items-center justify-center gap-2 text-sm">
+                        <svg class="w-5 h-5 fill-current" viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg>
+                        <span>停止 (STOP)</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Quick Soundboard Buttons -->
+            <div class="bg-radio-card border border-radio-border rounded-xl p-5 shadow-lg">
+                <h2 class="text-sm font-bold tracking-wider text-radio-accent uppercase flex items-center justify-between mb-4">
+                    <span>プリセット サウンドボード</span>
+                    <span class="text-xs font-normal text-slate-400">Quick Phrases</span>
+                </h2>
+
+                <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3" id="presetGrid">
+                    <!-- Standard Quick Buttons -->
+                    <button data-phrase="SOS" class="preset-btn bg-slate-900/80 hover:bg-radio-accent/20 border border-radio-border hover:border-radio-accent/50 p-3 rounded-lg text-left transition group">
+                        <div class="font-bold text-white text-sm group-hover:text-radio-accent">SOS</div>
+                        <div class="font-mono text-[11px] text-slate-400 truncate">... --- ...</div>
+                    </button>
+
+                    <button data-phrase="CQ CQ CQ" class="preset-btn bg-slate-900/80 hover:bg-radio-accent/20 border border-radio-border hover:border-radio-accent/50 p-3 rounded-lg text-left transition group">
+                        <div class="font-bold text-white text-sm group-hover:text-radio-accent">CQ CQ CQ</div>
+                        <div class="font-mono text-[11px] text-slate-400 truncate">-.-. --.-</div>
+                    </button>
+
+                    <button data-phrase="MAYDAY" class="preset-btn bg-slate-900/80 hover:bg-radio-accent/20 border border-radio-border hover:border-radio-accent/50 p-3 rounded-lg text-left transition group">
+                        <div class="font-bold text-white text-sm group-hover:text-radio-accent">MAYDAY</div>
+                        <div class="font-mono text-[11px] text-slate-400 truncate">-- .- -.-- -.. .- -.--</div>
+                    </button>
+
+                    <button data-phrase="ROGER" class="preset-btn bg-slate-900/80 hover:bg-radio-accent/20 border border-radio-border hover:border-radio-accent/50 p-3 rounded-lg text-left transition group">
+                        <div class="font-bold text-white text-sm group-hover:text-radio-accent">ROGER (R)</div>
+                        <div class="font-mono text-[11px] text-slate-400 truncate">.-.</div>
+                    </button>
+
+                    <button data-phrase="73" class="preset-btn bg-slate-900/80 hover:bg-radio-accent/20 border border-radio-border hover:border-radio-accent/50 p-3 rounded-lg text-left transition group">
+                        <div class="font-bold text-white text-sm group-hover:text-radio-accent">73 (Best Regards)</div>
+                        <div class="font-mono text-[11px] text-slate-400 truncate">--... ...--</div>
+                    </button>
+
+                    <button data-phrase="HELP" class="preset-btn bg-slate-900/80 hover:bg-radio-accent/20 border border-radio-border hover:border-radio-accent/50 p-3 rounded-lg text-left transition group">
+                        <div class="font-bold text-white text-sm group-hover:text-radio-accent">HELP</div>
+                        <div class="font-mono text-[11px] text-slate-400 truncate">.... . .-.. .--.</div>
+                    </button>
+
+                    <button data-phrase="YES" class="preset-btn bg-slate-900/80 hover:bg-radio-accent/20 border border-radio-border hover:border-radio-accent/50 p-3 rounded-lg text-left transition group">
+                        <div class="font-bold text-white text-sm group-hover:text-radio-accent">YES</div>
+                        <div class="font-mono text-[11px] text-slate-400 truncate">-.-- . ...</div>
+                    </button>
+
+                    <button data-phrase="NO" class="preset-btn bg-slate-900/80 hover:bg-radio-accent/20 border border-radio-border hover:border-radio-accent/50 p-3 rounded-lg text-left transition group">
+                        <div class="font-bold text-white text-sm group-hover:text-radio-accent">NO</div>
+                        <div class="font-mono text-[11px] text-slate-400 truncate">-. ---</div>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Custom Presets Card -->
+            <div class="bg-radio-card border border-radio-border rounded-xl p-5 shadow-lg">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-sm font-bold tracking-wider text-radio-accent uppercase">カスタムプリセット (保存機能)</h2>
+                    <button id="btnSaveCurrentCustom" class="text-xs bg-radio-cyan/20 hover:bg-radio-cyan/30 text-radio-cyan border border-radio-cyan/40 px-3 py-1.5 rounded-lg font-semibold transition">
+                        + 現在の入力を追加
+                    </button>
+                </div>
+                <div id="customPresetGrid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                    <div class="text-xs text-slate-500 italic col-span-full py-2">保存されたカスタムプリセットはありません。上のボタンで登録できます。</div>
+                </div>
+            </div>
+
+        </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="border-t border-radio-border/60 bg-radio-card/50 py-3 text-center text-xs text-slate-500">
+        Web Audio API Powered CW Soundboard • Designed for Virtual Mic Audio Routing
+    </footer>
+
+    <script>
+        // Morse Code Standard Dictionary (International)
+        const MORSE_CODE_MAP = {
+            'A': '.-',    'B': '-...',  'C': '-.-.',  'D': '-..',   'E': '.',
+            'F': '..-.',  'G': '--.',   'H': '....',  'I': '..',    'J': '.---',
+            'K': '-.-',   'L': '.-..',  'M': '--',    'N': '-.',    'O': '---',
+            'P': '.--.',  'Q': '--.-',  'R': '.-.',   'S': '...',   'T': '-',
+            'U': '..-',   'V': '...-',  'W': '.--',   'X': '-..-',  'Y': '-.--',
+            'Z': '--..',
+            '0': '-----', '1': '.----', '2': '..---', '3': '...--', '4': '....-',
+            '5': '.....', '6': '-....', '7': '--...', '8': '---..', '9': '----.',
+            '.': '.-.-.-', ',': '--..--', '?': '..--..', "'": '.----.', '!': '-.-.--',
+            '/': '-..-.', '(': '-.--.', ')': '-.--.-', '&': '.-...', ':': '---...',
+            ';': '-.-.-.', '=': '-...-', '+': '.-.-.', '-': '-....-', '_': '..--.-',
+            '"': '.-..-.', '$': '...-..-', '@': '.--.-.'
+        };
+
+        // Application State Variables
+        let audioCtx = null;
+        let masterGainNode = null;
+        let monitorGainNode = null;
+        let mediaStreamDest = null;
+        let hiddenAudioElement = null;
+        let analyserNode = null;
+
+        let inputMode = 'TEXT'; // 'TEXT' or 'MORSE'
+        let isPlaying = false;
+        let playbackQueue = [];
+        let playbackTimeout = null;
+        let currentSequenceId = 0;
+
+        let customPresets = JSON.parse(localStorage.getItem('cw_custom_presets') || '[]');
+
+        // UI Element References
+        const textInput = document.getElementById('textInput');
+        const morseCodeOutput = document.getElementById('morseCodeOutput');
+        const freqSlider = document.getElementById('freqSlider');
+        const freqDisplay = document.getElementById('freqDisplay');
+        const wpmSlider = document.getElementById('wpmSlider');
+        const wpmDisplay = document.getElementById('wpmDisplay');
+        const volumeSlider = document.getElementById('volumeSlider');
+        const volumeDisplay = document.getElementById('volumeDisplay');
+        const loopToggle = document.getElementById('loopToggle');
+        const localMonitorToggle = document.getElementById('localMonitorToggle');
+        const audioOutputSelect = document.getElementById('audioOutputSelect');
+        const btnGrantPermission = document.getElementById('btnGrantPermission');
+        const btnPlay = document.getElementById('btnPlay');
+        const btnStop = document.getElementById('btnStop');
+        const txLed = document.getElementById('txLed');
+        const txStatusText = document.getElementById('txStatusText');
+        const visualizerCanvas = document.getElementById('visualizerCanvas');
+        const straightKeyBtn = document.getElementById('straightKeyBtn');
+
+        // Initialize Web Audio Context
+        function initAudioContext() {
+            if (audioCtx) return;
+
+            const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+            audioCtx = new AudioContextClass();
+
+            // Master Gain Node for routing to destination
+            masterGainNode = audioCtx.createGain();
+            masterGainNode.gain.setValueAtTime(parseFloat(volumeSlider.value) / 100, audioCtx.currentTime);
+
+            // Local speaker monitor Gain Node
+            monitorGainNode = audioCtx.createGain();
+            monitorGainNode.gain.setValueAtTime(localMonitorToggle.checked ? 1 : 0, audioCtx.currentTime);
+
+            // Visualizer Analyser Node
+            analyserNode = audioCtx.createAnalyser();
+            analyserNode.fftSize = 256;
+
+            // Stream destination to feed hidden Audio Element (enables setSinkId for virtual mic)
+            mediaStreamDest = audioCtx.createMediaStreamDestination();
+
+            // Hidden audio element for sinkId output routing
+            hiddenAudioElement = new Audio();
+            hiddenAudioElement.srcObject = mediaStreamDest.stream;
+            hiddenAudioElement.muted = false;
+            hiddenAudioElement.play().catch(() => {}); // silence autoplay restriction block
+
+            // Connect nodes
+            masterGainNode.connect(analyserNode);
+            analyserNode.connect(mediaStreamDest);
+            analyserNode.connect(monitorGainNode);
+            monitorGainNode.connect(audioCtx.destination);
+
+            startVisualizer();
+        }
+
+        // Request Permissions and Enumerate Audio Output Devices
+        async function updateAudioDevices() {
+            initAudioContext();
+            
+            try {
+                // Trigger permission prompt if not granted
+                await navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+                    // Close temporary stream immediately
+                    stream.getTracks().forEach(track => track.stop());
+                }).catch(() => {
+                    showToast('マイク許可が得られませんでしたが、デバイス一覧を試行します', 'warn');
+                });
+
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const audioOutputs = devices.filter(d => d.kind === 'audiooutput');
+
+                audioOutputSelect.innerHTML = '<option value="default">既定のスピーカー (Default Output)</option>';
+                
+                audioOutputs.forEach(device => {
+                    if (device.deviceId !== 'default') {
+                        const option = document.createElement('option');
+                        option.value = device.deviceId;
+                        option.textContent = device.label || `出力デバイス (${device.deviceId.substr(0, 8)}...)`;
+                        audioOutputSelect.appendChild(option);
+                    }
+                });
+
+                showToast('オーディオデバイス一覧を更新しました', 'success');
+            } catch (err) {
+                console.error('Device enumeration error:', err);
+                showToast('デバイス一覧取得に失敗しました', 'error');
+            }
+        }
+
+        // Change target sink output device
+        async function handleDeviceChange() {
+            initAudioContext();
+            const deviceId = audioOutputSelect.value;
+
+            try {
+                if (typeof audioCtx.setSinkId === 'function') {
+                    await audioCtx.setSinkId(deviceId);
+                    showToast('出力先をセットしました (AudioContext Direct)', 'success');
+                } else if (typeof hiddenAudioElement.setSinkId === 'function') {
+                    await hiddenAudioElement.setSinkId(deviceId);
+                    showToast('出力先をセットしました (Virtual Cable Routing)', 'success');
+                } else {
+                    showToast('このブラウザはsetSinkId(出力先選択)に対応していません', 'warn');
+                }
+            } catch (err) {
+                console.error('setSinkId error:', err);
+                showToast('デバイス設定失敗: ' + err.message, 'error');
+            }
+        }
+
+        // Convert Text to Morse Data Structure
+        function textToMorseData(text) {
+            const result = [];
+            const upperText = text.toUpperCase().trim();
+
+            for (let i = 0; i < upperText.length; i++) {
+                const char = upperText[i];
+
+                if (char === ' ') {
+                    result.push({ char: ' ', code: '/', isSpace: true });
+                } else if (MORSE_CODE_MAP[char]) {
+                    result.push({ char: char, code: MORSE_CODE_MAP[char], isSpace: false });
+                } else {
+                    // Unknown character ignored or skipped
+                    result.push({ char: char, code: '?', isSpace: false });
+                }
+            }
+            return result;
+        }
+
+        // Render Morse Code in Output Panel with dynamic highlight DOM spans
+        function updateMorseOutputDisplay() {
+            const inputVal = textInput.value;
+
+            if (!inputVal.trim()) {
+                morseCodeOutput.innerHTML = '<span class="text-slate-600 italic text-xs">テキストを入力するとここにコードが表示されます...</span>';
+                return;
+            }
+
+            if (inputMode === 'TEXT') {
+                const parsed = textToMorseData(inputVal);
+                morseCodeOutput.innerHTML = '';
+
+                parsed.forEach((item, index) => {
+                    const span = document.createElement('span');
+                    span.dataset.index = index;
+                    span.className = 'morse-char-node transition-all duration-150 px-1 py-0.5 rounded border border-transparent';
+
+                    if (item.isSpace) {
+                        span.innerHTML = `<span class="text-slate-600 font-sans text-xs">/</span>`;
+                    } else {
+                        span.innerHTML = `<span class="text-xs text-slate-400 block -mb-1 text-center font-sans">${item.char}</span><span class="font-bold text-radio-accent">${item.code}</span>`;
+                    }
+                    morseCodeOutput.appendChild(span);
+                });
+            } else { // DIRECT MORSE MODE
+                morseCodeOutput.innerHTML = '';
+                const tokens = inputVal.split(' ');
+                tokens.forEach((token, index) => {
+                    const span = document.createElement('span');
+                    span.dataset.index = index;
+                    span.className = 'morse-char-node transition-all duration-150 px-1 py-0.5 rounded border border-transparent';
+                    span.innerHTML = `<span class="font-bold text-radio-accent">${token}</span>`;
+                    morseCodeOutput.appendChild(span);
+                });
+            }
+        }
+
+        // Play smooth tone with 5ms envelope ramping to prevent clicks/pops
+        function playTone(durationSeconds, onComplete) {
+            if (!audioCtx) initAudioContext();
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+
+            const osc = audioCtx.createOscillator();
+            const envelope = audioCtx.createGain();
+
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(parseFloat(freqSlider.value), audioCtx.currentTime);
+
+            // Envelope Ramping (5ms Attack/Release)
+            const now = audioCtx.currentTime;
+            const attackTime = 0.005;
+            const releaseTime = 0.005;
+
+            envelope.gain.setValueAtTime(0, now);
+            envelope.gain.linearRampToValueAtTime(1, now + attackTime);
+            envelope.gain.setValueAtTime(1, now + durationSeconds - releaseTime);
+            envelope.gain.linearRampToValueAtTime(0, now + durationSeconds);
+
+            osc.connect(envelope);
+            envelope.connect(masterGainNode);
+
+            setTxState(true);
+
+            osc.start(now);
+            osc.stop(now + durationSeconds);
+
+            osc.onended = () => {
+                setTxState(false);
+                if (onComplete) onComplete();
+            };
+        }
+
+        // Calculate PARIS Morse timing units based on WPM
+        function getTimingUnits() {
+            const wpm = parseInt(wpmSlider.value, 10);
+            const dotDuration = 1.2 / wpm; // Standard WPM formula (1 unit in seconds)
+            return {
+                dot: dotDuration,
+                dash: dotDuration * 3,
+                symbolGap: dotDuration,      // Between dots/dashes in same char
+                charGap: dotDuration * 3,        // Between characters
+                wordGap: dotDuration * 7         // Between words
+            };
+        }
+
+        // Primary Transmission Playback Controller
+        function startTransmission() {
+            initAudioContext();
+            stopTransmission(); // Clear any existing
+
+            const inputVal = textInput.value.trim();
+            if (!inputVal) {
+                showToast('送信するテキストが入力されていません', 'warn');
+                return;
+            }
+
+            isPlaying = true;
+            currentSequenceId++;
+            const seqId = currentSequenceId;
+
+            let units = getTimingUnits();
+            let items = [];
+
+            if (inputMode === 'TEXT') {
+                items = textToMorseData(inputVal);
+            } else {
+                items = inputVal.split(' ').map(code => ({ char: '', code: code, isSpace: false }));
+            }
+
+            // Build detailed playback queue
+            let queue = [];
+            items.forEach((item, itemIdx) => {
+                if (item.isSpace) {
+                    queue.push({ type: 'gap', duration: units.wordGap, index: itemIdx });
+                } else {
+                    const symbols = item.code.split('');
+                    symbols.forEach((sym, symIdx) => {
+                        if (sym === '.') {
+                            queue.push({ type: 'tone', duration: units.dot, index: itemIdx });
+                        } else if (sym === '-') {
+                            queue.push({ type: 'tone', duration: units.dash, index: itemIdx });
+                        }
+
+                        // Gap between dots/dashes
+                        if (symIdx < symbols.length - 1) {
+                            queue.push({ type: 'gap', duration: units.symbolGap, index: itemIdx });
+                        }
+                    });
+
+                    // Gap between characters
+                    if (itemIdx < items.length - 1) {
+                        queue.push({ type: 'gap', duration: units.charGap, index: itemIdx });
+                    }
+                }
+            });
+
+            processPlaybackQueue(queue, 0, seqId);
+        }
+
+        function processPlaybackQueue(queue, qIndex, seqId) {
+            if (!isPlaying || seqId !== currentSequenceId) return;
+
+            if (qIndex >= queue.length) {
+                // Finished transmission
+                clearHighlights();
+                if (loopToggle.checked && isPlaying) {
+                    playbackTimeout = setTimeout(() => {
+                        processPlaybackQueue(queue, 0, seqId);
+                    }, getTimingUnits().wordGap * 1000);
+                } else {
+                    stopTransmission();
+                    showToast('送信完了 (TX Complete)', 'success');
+                }
+                return;
+            }
+
+            const currentItem = queue[qIndex];
+            highlightNode(currentItem.index);
+
+            if (currentItem.type === 'tone') {
+                playTone(currentItem.duration, () => {
+                    processPlaybackQueue(queue, qIndex + 1, seqId);
+                });
+            } else {
+                setTxState(false);
+                playbackTimeout = setTimeout(() => {
+                    processPlaybackQueue(queue, qIndex + 1, seqId);
+                }, currentItem.duration * 1000);
+            }
+        }
+
+        function stopTransmission() {
+            isPlaying = false;
+            currentSequenceId++;
+            if (playbackTimeout) clearTimeout(playbackTimeout);
+            clearHighlights();
+            setTxState(false);
+        }
+
+        function highlightNode(index) {
+            clearHighlights();
+            const node = morseCodeOutput.querySelector(`[data-index="${index}"]`);
+            if (node) {
+                node.classList.add('bg-radio-accent/30', 'border-radio-accent', 'scale-110');
+            }
+        }
+
+        function clearHighlights() {
+            morseCodeOutput.querySelectorAll('.morse-char-node').forEach(node => {
+                node.classList.remove('bg-radio-accent/30', 'border-radio-accent', 'scale-110');
+            });
+        }
+
+        function setTxState(active) {
+            if (active) {
+                txLed.className = 'w-3 h-3 rounded-full bg-radio-red glow-red led-active';
+                txStatusText.textContent = 'TRANSMITTING (TX)';
+                txStatusText.className = 'text-radio-red font-bold';
+            } else {
+                txLed.className = 'w-3 h-3 rounded-full bg-slate-600';
+                txStatusText.textContent = 'STANDBY';
+                txStatusText.className = 'text-slate-400 font-semibold';
+            }
+        }
+
+        // Manual Oscillator for Straight Key
+        let manualOsc = null;
+        let manualGain = null;
+
+        function startManualKey() {
+            initAudioContext();
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            if (manualOsc) return;
+
+            manualOsc = audioCtx.createOscillator();
+            manualGain = audioCtx.createGain();
+
+            manualOsc.type = 'sine';
+            manualOsc.frequency.setValueAtTime(parseFloat(freqSlider.value), audioCtx.currentTime);
+
+            const now = audioCtx.currentTime;
+            manualGain.gain.setValueAtTime(0, now);
+            manualGain.gain.linearRampToValueAtTime(1, now + 0.005);
+
+            manualOsc.connect(manualGain);
+            manualGain.connect(masterGainNode);
+
+            manualOsc.start(now);
+            setTxState(true);
+            straightKeyBtn.classList.add('bg-radio-red/20', 'border-radio-red');
+        }
+
+        function stopManualKey() {
+            if (!manualOsc) return;
+
+            const now = audioCtx.currentTime;
+            manualGain.gain.linearRampToValueAtTime(0, now + 0.005);
+            setTimeout(() => {
+                if (manualOsc) {
+                    manualOsc.stop();
+                    manualOsc.disconnect();
+                    manualOsc = null;
+                    manualGain = null;
+                }
+                setTxState(false);
+                straightKeyBtn.classList.remove('bg-radio-red/20', 'border-radio-red');
+            }, 10);
+        }
+
+        // Live Waveform Canvas Rendering
+        function startVisualizer() {
+            const canvasCtx = visualizerCanvas.getContext('2d');
+            const bufferLength = analyserNode.frequencyBinCount;
+            const dataArray = new Uint8Array(bufferLength);
+
+            function draw() {
+                requestAnimationFrame(draw);
+                analyserNode.getByteTimeDomainData(dataArray);
+
+                canvasCtx.fillStyle = '#020617';
+                canvasCtx.fillRect(0, 0, visualizerCanvas.width, visualizerCanvas.height);
+
+                canvasCtx.lineWidth = 2;
+                canvasCtx.strokeStyle = '#10b981';
+                canvasCtx.beginPath();
+
+                const sliceWidth = visualizerCanvas.width * 1.0 / bufferLength;
+                let x = 0;
+
+                for (let i = 0; i < bufferLength; i++) {
+                    const v = dataArray[i] / 128.0;
+                    const y = v * visualizerCanvas.height / 2;
+
+                    if (i === 0) {
+                        canvasCtx.moveTo(x, y);
+                    } else {
+                        canvasCtx.lineTo(x, y);
+                    }
+                    x += sliceWidth;
+                }
+
+                canvasCtx.lineTo(visualizerCanvas.width, visualizerCanvas.height / 2);
+                canvasCtx.stroke();
+            }
+            draw();
+        }
+
+        function renderCustomPresets() {
+            const grid = document.getElementById('customPresetGrid');
+            grid.innerHTML = '';
+
+            if (customPresets.length === 0) {
+                grid.innerHTML = '<div class="text-xs text-slate-500 italic col-span-full py-2">保存されたカスタムプリセットはありません。上のボタンで登録できます。</div>';
+                return;
+            }
+
+            customPresets.forEach((item, index) => {
+                const card = document.createElement('div');
+                card.className = 'bg-slate-900/90 border border-radio-border p-2.5 rounded-lg flex justify-between items-center group hover:border-radio-cyan/50 transition';
+                
+                card.innerHTML = `
+                    <button class="flex-grow text-left truncate mr-2" onclick="triggerPreset('${item.replace(/'/g, "\\'")}')">
+                        <div class="font-bold text-white text-xs group-hover:text-radio-cyan truncate">${item}</div>
+                    </button>
+                    <button class="text-slate-600 hover:text-radio-red text-xs p-1" onclick="deleteCustomPreset(${index})">✕</button>
+                `;
+                grid.appendChild(card);
+            });
+        }
+
+        function saveCurrentCustomPreset() {
+            const val = textInput.value.trim();
+            if (!val) {
+                showToast('保存するテキストを入力してください', 'warn');
+                return;
+            }
+            if (customPresets.includes(val)) {
+                showToast('すでに同じプリセットが存在します', 'warn');
+                return;
+            }
+            customPresets.push(val);
+            localStorage.setItem('cw_custom_presets', JSON.stringify(customPresets));
+            renderCustomPresets();
+            showToast('プリセットに保存しました', 'success');
+        }
+
+        window.deleteCustomPreset = function(index) {
+            customPresets.splice(index, 1);
+            localStorage.setItem('cw_custom_presets', JSON.stringify(customPresets));
+            renderCustomPresets();
+            showToast('プリセットを削除しました', 'info');
+        };
+
+        window.triggerPreset = function(phrase) {
+            textInput.value = phrase;
+            updateMorseOutputDisplay();
+            startTransmission();
+        };
+
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            
+            let bgClass = 'bg-slate-800 border-slate-600 text-white';
+            if (type === 'success') bgClass = 'bg-emerald-950 border-radio-accent text-radio-accent';
+            if (type === 'warn') bgClass = 'bg-amber-950 border-radio-amber text-radio-amber';
+            if (type === 'error') bgClass = 'bg-rose-950 border-radio-red text-radio-red';
+
+            toast.className = `px-4 py-2.5 rounded-lg border text-xs font-semibold shadow-xl transition-all duration-300 pointer-events-auto transform translate-y-2 opacity-0 ${bgClass}`;
+            toast.textContent = message;
+
+            container.appendChild(toast);
+
+            setTimeout(() => {
+                toast.classList.remove('translate-y-2', 'opacity-0');
+            }, 10);
+
+            setTimeout(() => {
+                toast.classList.add('opacity-0', 'translate-y-2');
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        }
+
+        // Event Listeners Binding
+        textInput.addEventListener('input', updateMorseOutputDisplay);
+
+        freqSlider.addEventListener('input', () => {
+            freqDisplay.textContent = `${freqSlider.value} Hz`;
+        });
+
+        wpmSlider.addEventListener('input', () => {
+            wpmDisplay.textContent = `${wpmSlider.value} WPM`;
+        });
+
+        volumeSlider.addEventListener('input', () => {
+            volumeDisplay.textContent = `${volumeSlider.value}%`;
+            if (masterGainNode && audioCtx) {
+                masterGainNode.gain.setValueAtTime(parseFloat(volumeSlider.value) / 100, audioCtx.currentTime);
+            }
+        });
+
+        localMonitorToggle.addEventListener('change', () => {
+            if (monitorGainNode && audioCtx) {
+                monitorGainNode.gain.setValueAtTime(localMonitorToggle.checked ? 1 : 0, audioCtx.currentTime);
+            }
+        });
+
+        btnPlay.addEventListener('click', startTransmission);
+        btnStop.addEventListener('click', stopTransmission);
+        btnClearInput.addEventListener('click', () => {
+            textInput.value = '';
+            updateMorseOutputDisplay();
+            stopTransmission();
+        });
+
+        btnGrantPermission.addEventListener('click', updateAudioDevices);
+        audioOutputSelect.addEventListener('change', handleDeviceChange);
+
+        // Input Mode Switchers
+        const modeTextBtn = document.getElementById('modeTextBtn');
+        const modeMorseBtn = document.getElementById('modeMorseBtn');
+
+        modeTextBtn.addEventListener('click', () => {
+            inputMode = 'TEXT';
+            modeTextBtn.className = 'px-3 py-1 rounded-md bg-radio-accent text-black font-bold border border-radio-accent';
+            modeMorseBtn.className = 'px-3 py-1 rounded-md bg-slate-800 text-slate-400 font-semibold border border-radio-border hover:text-white';
+            textInput.placeholder = '送信したいテキストまたはローマ字を入力... (例: CQ CQ CQ THIS IS JA1YXP)';
+            updateMorseOutputDisplay();
+        });
+
+        modeMorseBtn.addEventListener('click', () => {
+            inputMode = 'MORSE';
+            modeMorseBtn.className = 'px-3 py-1 rounded-md bg-radio-accent text-black font-bold border border-radio-accent';
+            modeTextBtn.className = 'px-3 py-1 rounded-md bg-slate-800 text-slate-400 font-semibold border border-radio-border hover:text-white';
+            textInput.placeholder = 'モールス信号を直接入力... (例: ... --- ... / -.-. --.-)';
+            updateMorseOutputDisplay();
+        });
+
+        // Preset Grid Buttons
+        document.querySelectorAll('.preset-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                triggerPreset(btn.dataset.phrase);
+            });
+        });
+
+        document.getElementById('btnSaveCurrentCustom').addEventListener('click', saveCurrentCustomPreset);
+
+        // Guide Modal Toggle
+        document.getElementById('guideToggleBtn').addEventListener('click', () => {
+            document.getElementById('guidePanel').classList.toggle('hidden');
+        });
+
+        // Manual Key Event Handling (Mouse & Keyboard)
+        straightKeyBtn.addEventListener('mousedown', startManualKey);
+        straightKeyBtn.addEventListener('mouseup', stopManualKey);
+        straightKeyBtn.addEventListener('mouseleave', stopManualKey);
+
+        straightKeyBtn.addEventListener('touchstart', (e) => { e.preventDefault(); startManualKey(); });
+        straightKeyBtn.addEventListener('touchend', (e) => { e.preventDefault(); stopManualKey(); });
+
+        window.addEventListener('keydown', (e) => {
+            if ((e.code === 'Space' || e.code === 'Enter') && document.activeElement !== textInput) {
+                e.preventDefault();
+                startManualKey();
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            if ((e.code === 'Space' || e.code === 'Enter') && document.activeElement !== textInput) {
+                e.preventDefault();
+                stopManualKey();
+            }
+        });
+
+        // Initial Initialization
+        window.addEventListener('DOMContentLoaded', () => {
+            renderCustomPresets();
+            updateMorseOutputDisplay();
+            // Automatically list devices if permission was previously granted
+            if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+                navigator.mediaDevices.enumerateDevices().then(devices => {
+                    const audioOutputs = devices.filter(d => d.kind === 'audiooutput' && d.label);
+                    if (audioOutputs.length > 0) updateAudioDevices();
+                }).catch(() => {});
+            }
+        });
+    </script>
+</body>
+</html>
