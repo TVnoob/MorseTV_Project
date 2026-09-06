@@ -126,7 +126,7 @@
 
                 <div class="space-y-4">
                     <div>
-                        <label class="block text-xs font-semibold text-slate-300 mb-1.5">出力デバイス（マイク側）</label>
+                        <label class="block text-xs font-semibold text-slate-300 mb-1.5">出力デバイス（VoiceMeeter Input側）</label>
                         <div class="flex gap-2">
                             <select id="audioOutputSelect" class="flex-grow bg-slate-900 border border-radio-border text-white text-xs rounded-lg p-2.5 focus:ring-1 focus:ring-radio-accent focus:outline-none">
                                 <option value="default">既定のスピーカー (Default Output)</option>
@@ -135,7 +135,7 @@
                                 🔄 検出
                             </button>
                         </div>
-                        <p class="text-[11px] text-slate-400 mt-1">※VoiceMeeter Inputなど、通話アプリへ渡す仮想出力デバイスを選択してください。</p>
+                        <p class="text-[11px] text-slate-400 mt-1">※VoiceMeeter Inputを選択します。VoiceMeeter Output（マイク側）はこの一覧には出ません。</p>
                     </div>
 
                     <div class="pt-2 border-t border-radio-border/60 flex items-center justify-between">
@@ -422,11 +422,20 @@
             startVisualizer();
         }
 
-        // Request Permissions and Enumerate Audio Output Devices
+        // Request permission and enumerate playback devices. Recording devices
+        // such as VoiceMeeter Output are intentionally not included here.
         async function updateAudioDevices() {
             initAudioContext();
             
             try {
+                if (typeof navigator.mediaDevices.selectAudioOutput === 'function') {
+                    const selected = await navigator.mediaDevices.selectAudioOutput();
+                    addAudioOutputOption(selected, true);
+                    await hiddenAudioElement.setSinkId(selected.deviceId);
+                    showToast('出力先をセットしました', 'success');
+                    return;
+                }
+
                 // Trigger permission prompt if not granted
                 await navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
                     // Close temporary stream immediately
@@ -440,20 +449,27 @@
 
                 audioOutputSelect.innerHTML = '<option value="default">既定のスピーカー (Default Output)</option>';
                 
-                audioOutputs.forEach(device => {
-                    if (device.deviceId !== 'default') {
-                        const option = document.createElement('option');
-                        option.value = device.deviceId;
-                        option.textContent = device.label || `出力デバイス (${device.deviceId.substr(0, 8)}...)`;
-                        audioOutputSelect.appendChild(option);
-                    }
-                });
+                audioOutputs.forEach(device => addAudioOutputOption(device));
 
                 showToast('オーディオデバイス一覧を更新しました', 'success');
             } catch (err) {
                 console.error('Device enumeration error:', err);
                 showToast('デバイス一覧取得に失敗しました', 'error');
             }
+        }
+
+        function addAudioOutputOption(device, select = false) {
+            if (device.deviceId === 'default' ||
+                audioOutputSelect.querySelector(`option[value="${CSS.escape(device.deviceId)}"]`)) {
+                if (select) audioOutputSelect.value = device.deviceId;
+                return;
+            }
+
+            const option = document.createElement('option');
+            option.value = device.deviceId;
+            option.textContent = device.label || `出力デバイス (${device.deviceId.substr(0, 8)}...)`;
+            audioOutputSelect.appendChild(option);
+            if (select) audioOutputSelect.value = device.deviceId;
         }
 
         // Change the sink on the element that actually plays the MediaStream.
