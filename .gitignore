@@ -1,2 +1,6 @@
 # Ignore the import source directory
 /importSource/
+# ignore pycache files and builds
+__pycache__/
+dist/
+build/
