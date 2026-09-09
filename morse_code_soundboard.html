@@ -349,6 +349,35 @@
             '"': '.-..-.', '$': '...-..-', '@': '.--.-.'
         };
 
+
+        // ============ VRChat OSC bridge (added) ============
+        const REVERSE_MORSE = Object.fromEntries(
+            Object.entries(MORSE_CODE_MAP).map(([k, v]) => [v, k]));
+
+        let txItems = [], lastSentIndex = -1;
+
+        // Hands the character to the Python side, whichever wrapper is in use.
+        function sendToVRChat(ch) {
+            try {
+                if (window.pywebview && window.pywebview.api && window.pywebview.api.vrc_send_char) {
+                    window.pywebview.api.vrc_send_char(ch); return;
+                }
+                if (window.eel && window.eel.vrc_send_char) {
+                    window.eel.vrc_send_char(ch)(); return;
+                }
+                fetch('/vrc_send?c=' + encodeURIComponent(ch)).catch(() => {});
+            } catch (e) { /* bridge not up yet - transmission must not break */ }
+        }
+
+        // Fires only when the highlighted character actually changes.
+        function sendCurrentChar(index) {
+            if (index === lastSentIndex) return;
+            lastSentIndex = index;
+            const item = txItems[index];
+            sendToVRChat((!item || item.isSpace) ? ' ' : (item.char || ' '));
+        }
+        // ==================================================
+
         // Application State Variables
         let audioCtx = null;
         let masterGainNode = null;
@@ -618,7 +647,7 @@
             if (inputMode === 'TEXT') {
                 items = textToMorseData(inputVal);
             } else {
-                items = inputVal.split(' ').map(code => ({ char: '', code: code, isSpace: false }));
+                items = inputVal.split(' ').map(code => ({ char: REVERSE_MORSE[code] || '', code: code, isSpace: false }));
             }
 
             // Build detailed playback queue
@@ -648,6 +677,9 @@
                 }
             });
 
+            txItems = items;
+            lastSentIndex = -1;
+
             processPlaybackQueue(queue, 0, seqId);
         }
 
@@ -670,6 +702,7 @@
 
             const currentItem = queue[qIndex];
             highlightNode(currentItem.index);
+            sendCurrentChar(currentItem.index);
 
             if (currentItem.type === 'tone') {
                 playTone(currentItem.duration, () => {
@@ -688,6 +721,7 @@
             currentSequenceId++;
             if (playbackTimeout) clearTimeout(playbackTimeout);
             clearHighlights();
+            sendCurrentChar(-1);
             setTxState(false);
         }
 
