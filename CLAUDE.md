@@ -112,11 +112,49 @@ VRChat の OSC は UDP。JS の fetch / WebSocket では届かない。
   55 グリフだと 1 ステップ 0.0185 に対し分解能 0.0039。
   全 55 インデックスが量子化を通しても正しく復元されることを総当たりで確認済み。
   余裕は約 4.7 倍あるので記号を数個足しても安全。
+  **ただしこれは丸め（round）で復元した場合の話。** Motion Time + Stepped は
+  切り捨てで効くので、キーフレームの置き方を間違えると壊れる。**5-2 を必ず読むこと。**
 - **HTML パッチ**: 変更 4 箇所すべてが適用されていることを文字列検査で確認。
 - **3Dモデル**: 前面・背面・斜めからレンダリングして形状破綻がないことを目視確認。
   ベゼル内壁の法線反転バグを1件修正済み。
 
 ---
+
+## 4-2. Motion Time のキーフレーム配置（重大。ここを外すと他人にだけ壊れて見える）
+
+**キー i をフレーム i に置いてはいけない。フレーム i - 0.5 に置くこと。**
+
+理由。Motion Time はパラメータ値をそのままクリップの正規化時刻として使う。
+Stepped 補間は「その時刻以前で最も近いキー」を保持するので、実質 floor で効く。
+一方リモートに届く値は 8bit 量子化で ±0.002 ぶれる。**下振れするとキー境界を割り、
+1つ前のグリフが表示される。**
+
+素直にキー i をフレーム i へ置いた場合を総当たりした結果:
+
+```
+配置A（キー i = フレーム i）        55 文字中 26 文字がずれる
+  index  2 'B' -> frame 1.9059 -> キー 1 'A' が出る
+  index  3 'C' -> frame 2.9647 -> キー 2 'B' が出る
+  ...
+配置B（キー i = フレーム i - 0.5）  ずれ 0 件。境界まで最小 0.39 フレームの余裕
+```
+
+半フレームずらすと、量子化後の時刻がキー区間の**中央**に落ちる。
+余裕は片側 0.5 フレームに対し誤差 0.106 フレームで約 4.7 倍。
+
+**さらに厄介なのは、ローカル（自分の画面）では量子化が効かないので正常に見えること。**
+自分でテストしても気づけない。他人に見てもらうか、最初から配置Bで作るしかない。
+
+実装上の注意:
+
+- Unity のアニメーションウィンドウは整数フレームにスナップするので、
+  **クリップの fps を 120 にして キー i をフレーム `2i - 1` に置く**（i=0 はフレーム0）。
+  60fps 換算で i - 0.5 になる。
+- クリップ長は 60fps 換算で 54 フレーム（120fps なら 108）。最後のキーは 107 なので、
+  **フレーム 108 に index 54 と同じ値のダミーキーを 1 個足して長さを確定させる。**
+  これがないと `MorseChar = 1.0`（`@`）が下振れした時に 1 つ前へ落ちる。
+
+検算コードは `verify_motion_time.py` にしてある。グリフを増減したら走らせ直すこと。
 
 ## 5. 3Dモデルの仕様
 
@@ -204,16 +242,77 @@ VRChat の OSC は UDP。JS の fetch / WebSocket では届かない。
 PyInstaller が自動で同梱する。`.spec` に足すものはない。
 `unity_assets/` は Unity 側でだけ使うので exe には不要。
 
-### 8-3. Unity 側（ユーザーが手作業で行う。Claude Code の担当外）
+### 8-3. Unity 側の作業（ユーザーが手作業で行う）
 
-- `TV_Screen` にアトラスを割り当て。Emission に乗せるとブラウン管らしくなる
-- Expression Parameters に float `MorseChar` を追加
-- 55 フレーム Stepped のクリップ作成、Motion Time に接続
+**A. TVモデルの取り込み**
 
-`.anim` は YAML なので生成も可能だが、Unity で開いて検証できないため
-確実に動く保証はできない、と伝えてある。**ユーザーの判断待ち。**
-やる場合は Renderer(classID 23) の `material._MainTex_ST.z` / `.w` を
-`m_FloatCurves` に、補間は全キー `m_TangentMode` を定数（Stepped）にする。
+1. `unity_assets/crt_tv.obj` と `crt_tv.mtl` を同じフォルダへドラッグ
+2. インポート設定は Scale Factor 1（メートル原寸で作ってある）、Normals は Import
+   （法線は生成済み。Calculate にすると画面の曲面が硬くなる）
+3. Materials タブ → Extract Materials で `TV_Body` / `TV_Screen` / `TV_Knob` /
+   `TV_Antenna` を取り出す
+4. アバターの子に置く。原点は接地面の中央。手に持たせるなら縮小する
+5. アンテナが要らなければ `TV_Antenna` のメッシュごと削ってよい
+
+**B. グリフアトラスのインポート設定**
+
+`unity_assets/morse_glyph_atlas.png` を入れて、
+
+- Alpha Is Transparency … ON
+- Wrap Mode … Clamp
+- Filter Mode … Bilinear
+- **Generate Mip Maps … OFF**（遠くで隣のセルが混ざって別の文字が滲む）
+- Compression … None か High Quality（既定の圧縮だと細い線が潰れる）
+
+**C. 画面のマテリアル（落とし穴あり）**
+
+アトラスは**透過の白文字**。Unlit/Transparent にそのまま貼ると文字以外が透けて
+筐体の内側が見えてしまう。Emission に載せるのが正解:
+
+- `TV_Screen` のシェーダーは Standard
+- Albedo … テクスチャなしの暗い色（`crt_tv.mtl` の Kd 0.06, 0.07, 0.07 が目安）
+- Emission … ON、Emission Map にアトラス、色は白〜淡い緑
+- **Tiling を (0.125, 0.125)**。Offset はアニメーションが上書きするので何でもよい
+
+Standard の Emission Map は `_MainTex_ST` の UV に従う。だから Albedo に
+テクスチャを入れさえしなければ、`_MainTex_ST.z/w` を動かすと文字だけがずれる。
+Poiyomi などに差し替えると動かすプロパティ名が変わる（`_EmissionMap_ST` など）。
+まず Standard で通してから置き換えること。
+
+**D. Expression Parameters**
+
+float `MorseChar` を追加。Synced ON、Default 0、**Saved は OFF**
+（次回ログイン時に前回の文字が復元されると気味が悪い）。コストは 8 bit。
+
+**E. アニメーションクリップ（ここが本体）**
+
+- 動かすのは `TV_Screen` を持つ Renderer の
+  `material._MainTex_ST.z`（= offset.x）と `material._MainTex_ST.w`（= offset.y）
+- 値は `unity_assets/glyph_uv_table.json` の `offset` をそのまま使う
+- **全キーを Stepped**（キーを右クリック → Both Tangents → Constant）
+- **キーの時刻は 4-2 の配置B。クリップを 120fps にして、キー i をフレーム `2i - 1`
+  に置く（i=0 だけフレーム 0）。さらにフレーム 108 に index 54 と同じ値の
+  ダミーキーを 1 個足してクリップ長を確定させる**
+- 合計 56 キー x 2 プロパティ = 112 キー。手打ちは現実的でないので `.anim` の生成を推奨
+
+**F. Animator（FX レイヤー）**
+
+1. Parameters に float `MorseChar` を追加
+2. 新規レイヤーを作り Weight を 1 にする
+3. ステートを 1 つだけ置き、Motion に E のクリップを入れる
+4. **ステートの Motion Time にチェックを入れ、`MorseChar` を選ぶ**
+5. トランジションは不要。Write Defaults はアバター内の他レイヤーと揃える
+
+**G. アップロード後**
+
+Action Menu → Options → OSC → Enabled。パラメータを後から足した場合は
+同じメニューから OSC 設定をリセットする。あとは `app.py` を起動して送信するだけ。
+
+**H. 動作確認のしかた**
+
+**ローカルでは 8bit 量子化が効かないので、4-2 のキーずれは自分では絶対に見えない。**
+Animator ウィンドウで `MorseChar` を手動で 0.0185 刻みに動かして全文字を目視するか、
+他人に見てもらうこと。
 
 ### 8-4. 検討したが保留にしている案
 

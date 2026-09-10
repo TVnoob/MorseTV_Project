@@ -145,6 +145,17 @@ def _quant():
     return f"step {1/span:.4f} vs resolution {1/255:.4f} ({(1/span)/(1/255):.1f}x margin)"
 
 
+@check("Motion Time のキー配置が全グリフを正しく拾う")
+def _motion():
+    import verify_motion_time as M
+    bad_a = M.mismatches(0.0)
+    bad_b = M.mismatches(0.5)
+    assert not bad_b, (
+        f"キー i-0.5 の配置でも {len(bad_b)} 文字ずれる。CLAUDE.md 4-2 を参照")
+    return (f"i-0.5 配置で余裕 {M.worst_margin():.2f} フレーム "
+            f"(素直な i 配置なら {len(bad_a)} 文字が壊れる)")
+
+
 # ------------------------------------------------------------------ osc
 @check("OSC packets reach the wire and decode correctly")
 def _osc():
