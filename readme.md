@@ -1,5 +1,4 @@
 # Marker
-#### Geminiに命令1回目でなんかできました
 ## Desktop app
 
 The HTML UI can be run as a Windows desktop application with pywebview.
@@ -60,4 +59,5 @@ FAIL する。これは想定内。
 2. ゲーム内で Action Menu → Options → OSC → Enabled
 3. パラメータを後から足した場合は同じメニューで OSC 設定をリセット
 
-Unity 側の組み立て手順は `CLAUDE.md` の 8-3 を参照。
+~~Unity 側の組み立て手順は `CLAUDE.md` の 8-3 を参照。~~
+全体の組み立て手順は `UNITY_GUIDE.md` にまとめたのでそちらを参照。
