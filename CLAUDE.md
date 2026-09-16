@@ -46,6 +46,12 @@ VRChat 上でモールス信号を音声送信しつつ、アバターが持つ�
 | `unity_assets/crt_tv_preview.png` | レンダープレビュー | 参考用 |
 | `unity_assets/morse_glyph_atlas.png` | 8x8 グリフアトラス 512x512 | 完成 |
 | `unity_assets/glyph_uv_table.json` | 全文字のUVオフセットとパラメータ値 | 完成 |
+| `unity_assets/MorseCharTester.cs` | Animator ウィンドウを使わずに MorseChar を動かす確認用コンポーネント | 完成 |
+| `unity_assets/Editor/MorseCharClipGenerator.cs` | 55グリフ分のクリップを生成するUnityエディタ拡張 | 完成・VRChat 実機で動作確認済み |
+| `unity_assets/Editor/GenericAvatarBuilder.cs` | Generic Avatar アセットを作って Animator に割り当てる（必須） | 完成・これで OSC が通った |
+| `verify_motion_time.py` | Motion Time のキー配置の検算 | 配置Bでずれ0件 |
+| `vrc_osc_listen.py` | VRChat が 9001 へ送り返す OSC を表示する診断ツール | 完成 |
+| `UNITY_GUIDE.md` | Unity の画面操作レベルの手順書（初心者向け） | 作成済み |
 
 `importSource/` は引き継ぎ元の素材置き場で、`.gitignore` 済み。
 上記はそこからリポジトリ本体へ配置し直したもの。**編集するのは本体側**。
@@ -156,6 +162,40 @@ Stepped 補間は「その時刻以前で最も近いキー」を保持するの
 
 検算コードは `verify_motion_time.py` にしてある。グリフを増減したら走らせ直すこと。
 
+## 4-3. Vector 型マテリアルプロパティは 4 成分すべてをアニメーションする（重大）
+
+**`_MainTex_ST` の z/w（Offset）だけをクリップに入れてはいけない。x/y（Tiling）も入れる。**
+
+Unity の Animator は Vector 型のマテリアルプロパティを書くとき、クリップに含まれない
+成分を **0 で埋める**。Offset だけをアニメーションすると、Play した瞬間に Tiling が
+(0, 0) に潰れ、画面全体が 1 テクセルのサンプリングになって真っ暗になる。
+
+症状: 「Play していないときは Offset 手打ちで文字が出るのに、Play すると消える」
+「Play 中にマテリアルを見ると Tiling が 0 になっている」。実際に起きた。
+Motion Time が効いているかどうかとは無関係なので、そちらを疑うと迷宮入りする。
+
+`MorseCharClipGenerator.cs` は x/y に定数 1/8 のカーブを同梱するよう修正済み。
+シェーダーを差し替えて別の `_ST` を動かす場合も同じことをやること。
+
+## 4-4. VRChat 実行時の 2 つの罠（Unity ではエラーにならない。2026-09-16 に特定）
+
+**罠 1: Build & Test のローカルアバターでは Expression Parameters が OSC に載らない。**
+ID が `local:sdk_<名前>` で `:` を含むため OSC 設定ファイルを作れない。バンドルの中身が
+正しくても OSCQuery に出てこない。OSC の確認は Build & Publish 後の `avtr_` ID で行う。
+
+**罠 2: Animator の Avatar が `None` だと VRChat は AV3 を初期化しない。**
+Playable Layers も Expression Parameters も無視され、Animator 自身の Controller だけが
+素で動く。ループ再生のテストは通るのに OSC が効かない、という形で現れる。
+`unity_assets/Editor/GenericAvatarBuilder.cs`（`AvatarBuilder.BuildGenericAvatar`）で
+Generic Avatar アセットを作って割り当てると、その場で `MorseChar` が OSCQuery に現れた。
+
+どちらも「文字が出ない」以外の症状が無い。切り分けに使ったもの:
+- OSCQuery `http://127.0.0.1:<port>/avatar/parameters`（VRChat が認識しているパラメータ一覧）
+- `vrc_osc_listen.py`（9001 番。VRChat が送り返す値と `/avatar/change`）
+- VRChat の `output_log` の `Initialize None Avatar` / `No config loaded to reset`
+- `OSC/<usr>/Avatars/*.json`（生成された設定ファイル。`input` を持つ項目が Expression 由来）
+- バンドル（`.vrca`）を UnityFS として展開して文字列検索（scratchpad の `unityfs.py`）
+
 ## 5. 3Dモデルの仕様
 
 - 寸法 幅 0.44 x 高さ 0.38 x **奥行き 0.46** メートル（Unity 原寸のまま使える）
@@ -173,7 +213,10 @@ Stepped 補間は「その時刻以前で最も近いキー」を保持するの
 
 ## 6. グリフアトラスの仕様
 
-- `morse_glyph_atlas.png` 512x512、8列x8行、1セル 64px、白文字・透過
+- `morse_glyph_atlas.png` 512x512、8列x8行、1セル 64px、**黒背景・白文字・不透明**
+  （元は透過だったが、Unity の Alpha Is Transparency が透明部に白を滲ませて
+  文字が円に潰れる事故が起きたため不透明に作り替えた。透過版は
+  `importSource/morse_glyph_atlas.transparent.png`）
 - 文字順（`vrc_morse_osc.py` の `CHARSET` と完全一致させること）:
 
 ```
@@ -231,7 +274,18 @@ Stepped 補間は「その時刻以前で最も近いキー」を保持するの
 ### 8-2. 実機テスト（次にやること・ユーザー担当）
 
 1. VRChat 側で OSC を有効化（Action Menu → Options → OSC → Enabled）
-   パラメータを後から追加した場合は同じメニューから OSC 設定をリセット
+   **初めてそのアバターを着たら必ず Reset Config も押す。** VRChat はアバター ID ごとの
+   OSC 設定ファイルを初回に1回だけ生成して使い回すため、初回ビルド以降に足した
+   パラメータは受け付けない。OSC Debug のタイルは届いたアドレスを何でも表示するので
+   判断に使えない。`vrc_osc_listen.py`（9001 番の受信）に値が返ってくるかで判断する。
+   実際にここで数日詰まった（2026-09-16 に特定）
+   **さらに: Build & Test のローカルアバター（`local:sdk_…`）では VRChat が Expression
+   Parameters を OSC に公開しない。** Unity 側・バンドル・FX 動作まで全部正しいことを
+   確認したうえで OSCQuery（`http://127.0.0.1:<port>/avatar/parameters`、port は
+   VRChat ログの `OSCQuery on <port>`）に MorseChar が出なかった。OSC の確認は
+   Build & Publish 後の正規 `avtr_` ID で行う。診断に使えるもの:
+   OSCQuery の HTTP、`vrc_osc_listen.py`（9001 受信）、VRChat の output_log、
+   `HKCU\Software\VRChat\VRChat` の `VRC_INPUT_OSC`（OSC 有効フラグ）
 2. `.\.venv\Scripts\python.exe verify_setup.py` で全項目 PASS を確認
    （VRChat 起動中は 9000 番が埋まって OSC 項目だけ FAIL する。これは正常）
 3. `.\.venv\Scripts\python.exe vrc_morse_osc.py --demo HELLO WORLD` で単体送信テスト
@@ -243,6 +297,28 @@ PyInstaller が自動で同梱する。`.spec` に足すものはない。
 `unity_assets/` は Unity 側でだけ使うので exe には不要。
 
 ### 8-3. Unity 側の作業（ユーザーが手作業で行う）
+
+**進捗: VRChat 実機で OSC → MorseChar → 画面表示まで疎通（2026-09-16）。残りは 10-9 の他人からの見え方確認と exe 再ビルド。**
+**ユーザーの決定: 人型アバターに持たせるのではなく、TV そのものをアバターにする**
+（Generic アバター）。手順は `UNITY_GUIDE.md` 10-A。Animator・Controller・クリップは
+Unity テストで使ったものをそのまま流用でき、Descriptor と Expression Parameters を
+足すだけ。画面は +Z 向き、画面中央は原寸で (−0.05, 0.22, 0.21)。Scale 4 推奨。
+組み込み時の落とし穴: `crt_tv` のテスト用 Animator / MorseCharTester を外す、
+クリップを作り直す（パスが変わる）、新規レイヤーの Weight は 0 で始まる。
+
+**ユーザーは Unity 初心者。どのウィンドウで何をクリックするかまで書かないと詰まる。**
+画面操作レベルの手順は `UNITY_GUIDE.md` に分けてある。以下は要点のみ。
+
+**前提: アバターが要る場面と要らない場面**
+
+VRChat へアップロードするには当然アバター本体が要る（BOOTH 等で入手した
+`.unitypackage` をインポートするか、既に使っているものを持ち込む）。
+ただし**表示が正しく動くかの確認だけなら、アバターもアップロードも要らない。**
+`crt_tv` に Animator を 1 個足せば、Unity の Play モードで全文字を目視できる。
+
+先に H の手順で Unity 内の確認を済ませ、アバターへの組み込み（D）は
+アップロードする段になってからやるのが早い。フィードバックが桁違いに速く、
+本番アバターを触らずに済む。
 
 **A. TVモデルの取り込み**
 
@@ -258,42 +334,102 @@ PyInstaller が自動で同梱する。`.spec` に足すものはない。
 
 `unity_assets/morse_glyph_atlas.png` を入れて、
 
-- Alpha Is Transparency … ON
+- **Alpha Is Transparency … 必ず OFF**（下記）
 - Wrap Mode … Clamp
 - Filter Mode … Bilinear
 - **Generate Mip Maps … OFF**（遠くで隣のセルが混ざって別の文字が滲む）
 - Compression … None か High Quality（既定の圧縮だと細い線が潰れる）
 
+**Alpha Is Transparency を ON にしてはいけない。** これを ON にすると Unity は
+透明ピクセルへ隣の不透明ピクセルの色を滲ませる（半透明の縁の黒ずみ防止機能）。
+Standard の Emission は**アルファを見ずに RGB だけを使う**ので、滲んだ白が
+そのまま光り、全文字が白い円に潰れる。実際に起きた。症状は
+「Tiling 1/1 で緑の丸が格子状に並ぶ」「Offset を動かすと x か y の片方だけで全面緑」。
+今のアトラスは不透明なので効きようがないが、透過版を使う場合は必ず OFF。
+
 **C. 画面のマテリアル（落とし穴あり）**
 
 アトラスは**透過の白文字**。Unlit/Transparent にそのまま貼ると文字以外が透けて
-筐体の内側が見えてしまう。Emission に載せるのが正解:
+筐体の内側が見えてしまう。Emission に載せるのが正解。`TV_Screen` のマテリアルで:
 
-- `TV_Screen` のシェーダーは Standard
-- Albedo … テクスチャなしの暗い色（`crt_tv.mtl` の Kd 0.06, 0.07, 0.07 が目安）
-- Emission … ON、Emission Map にアトラス、色は白〜淡い緑
-- **Tiling を (0.125, 0.125)**。Offset はアニメーションが上書きするので何でもよい
+- Shader … Standard、Rendering Mode … Opaque
+- Albedo … **テクスチャは入れない。**色だけ暗いグレーにする
+  （`crt_tv.mtl` の Kd 0.06, 0.07, 0.07 が目安。真っ黒よりわずかに明るく）
+- Emission … チェックを入れる
+- **Emission のテクスチャスロットにアトラスを入れる**（次項参照）
+- Emission の HDR カラー … **白か淡い緑。黒のままだと何も光らない**
+- Global Illumination … **None**（既定は Baked。アバターは動くのでベイクされず、
+  ライトマップ生成が無駄になるだけ）
+- Main Maps の **Tiling を (0.125, 0.125)**。Offset はアニメーションが上書きする
 
-Standard の Emission Map は `_MainTex_ST` の UV に従う。だから Albedo に
+**「Emission Map」という名前の項目は存在しない。** Standard シェーダーの
+インスペクタでは、Emission にチェックを入れると `Color` の行が出る。その
+**行の左端にある小さな四角がテクスチャスロット**で、これが `_EmissionMap`。
+Albedo の左にあるのと同じ形の枠。ここへ `morse_glyph_atlas` をドラッグする。
+ラベルが「Color」なので Emission Map を探しても見つからない。
+
+Standard の Emission Map は **RGB だけを使い、アルファを見ない**。だからアトラスは
+「黒背景に白文字」の不透明画像でなければならない（6 章）。
+また Emission Map は `_MainTex_ST` の UV で引く。だから Albedo に
 テクスチャを入れさえしなければ、`_MainTex_ST.z/w` を動かすと文字だけがずれる。
 Poiyomi などに差し替えると動かすプロパティ名が変わる（`_EmissionMap_ST` など）。
-まず Standard で通してから置き換えること。
+その場合は `MorseCharClipGenerator.cs` の `PROP` も直すこと。まず Standard で通す。
 
-**D. Expression Parameters**
+**D. Expression Parameters**（VRChat へ上げる段階で必要。Unity 内テストには不要）
 
-float `MorseChar` を追加。Synced ON、Default 0、**Saved は OFF**
-（次回ログイン時に前回の文字が復元されると気味が悪い）。コストは 8 bit。
+**Avatar Descriptor の Expressions 欄はパラメータを書く場所ではなく、
+Expression Parameters "アセット" を差し込むスロット。** アセットを別に作る必要がある。
+ここを探しても入力欄が無いのはそのため。
 
-**E. アニメーションクリップ（ここが本体）**
+その前提として、**アバター本体がシーンに要る**。TV 単体では設定できない。
 
-- 動かすのは `TV_Screen` を持つ Renderer の
-  `material._MainTex_ST.z`（= offset.x）と `material._MainTex_ST.w`（= offset.y）
-- 値は `unity_assets/glyph_uv_table.json` の `offset` をそのまま使う
-- **全キーを Stepped**（キーを右クリック → Both Tangents → Constant）
-- **キーの時刻は 4-2 の配置B。クリップを 120fps にして、キー i をフレーム `2i - 1`
-  に置く（i=0 だけフレーム 0）。さらにフレーム 108 に index 54 と同じ値の
-  ダミーキーを 1 個足してクリップ長を確定させる**
-- 合計 56 キー x 2 プロパティ = 112 キー。手打ちは現実的でないので `.anim` の生成を推奨
+1. アバターをシーンに置き、ルートに VRC Avatar Descriptor が付いていることを確認
+   （Animator も必要。付いていないと SDK が
+   `MissingComponentException: There is no 'Animator' attached to ...` を出す）
+2. **TV をアバターの子にする**（手・胸など持たせたい場所）。
+   ここで決まる階層が E のクリップのパスになるので、**E より先にやる**
+3. Project ウィンドウで右クリック → Create → VRChat → Avatars → Expression Parameters
+   （SDK のバージョンによっては Create → VRChat → Expression Parameters）
+4. できた `.asset` を選択すると Inspector にパラメータ表が出る。そこへ追加:
+   - Name … `MorseChar`（`vrc_morse_osc.py` の `PARAM_NAME` と一致させること）
+   - Type … Float
+   - Default … 0
+   - Saved … **OFF**（次回ログイン時に前回の文字が復元されると気味が悪い）
+   - Synced … ON
+5. Avatar Descriptor の Expressions セクションで Customize を押し、
+   Parameters スロットに 4 のアセットを入れる
+
+コストは 8 bit。
+
+**Expressions Menu も必須。** 空でよいので Create → VRChat → Avatars → Expressions Menu を
+作って Menu スロットに入れる。無いと SDK Builder が赤エラーで止まる（実際に出た）。
+
+**E. アニメーションクリップ（生成スクリプトを使う）**
+
+56 キー x 2 プロパティ = 112 キーを 120fps グリッド上に半フレームずらしで手打ちするのは
+現実的でない。`unity_assets/Editor/MorseCharClipGenerator.cs` が全部やる。
+
+1. `MorseCharClipGenerator.cs` を Unity プロジェクトの `Assets/Editor/` に置く
+   （`Editor` という名前のフォルダでないとエディタ拡張として読まれない）
+2. **D-2 を先に済ませ**、アトラスを貼った `TV_Screen` を選択する
+3. メニュー Tools → Morse → MorseChar クリップを生成
+4. 保存先を聞かれるので適当な場所へ
+
+スクリプトがやること:
+
+- `Animator` を持つ一番上の親をアバタールートとみなし、そこからの相対パスを自動算出
+- 配置B（キー i をフレーム `2i-1`、i=0 だけ 0）で 55 グリフ分のキーを打つ
+- フレーム 108 に末尾ダミーを 1 個足してクリップ長を 0.9 秒に固定
+- 全キーを Constant（Stepped）に設定
+- **生成後、リモートの 8bit 量子化を通した値を実際に Evaluate して全グリフが
+  正しく出るか検算し、Console に結果を出す**
+
+Console に「8bit 量子化の検算: 全 55 グリフ OK」と出れば成功。
+ずれが報告されたらそのクリップは使わないこと。
+
+Renderer を選ばずに実行した、アバターの子に入れていない、といった場合は
+ダイアログで止まる。特に**アバターの子に入れる前に生成するとパスがずれ、
+クリップが何も動かさない**ので注意。
 
 **F. Animator（FX レイヤー）**
 
@@ -308,11 +444,23 @@ float `MorseChar` を追加。Synced ON、Default 0、**Saved は OFF**
 Action Menu → Options → OSC → Enabled。パラメータを後から足した場合は
 同じメニューから OSC 設定をリセットする。あとは `app.py` を起動して送信するだけ。
 
-**H. 動作確認のしかた**
+**H. 動作確認のしかた（アップロード不要。ここを先にやる）— 2026-09-14 に通過済み**
 
-**ローカルでは 8bit 量子化が効かないので、4-2 のキーずれは自分では絶対に見えない。**
-Animator ウィンドウで `MorseChar` を手動で 0.0185 刻みに動かして全文字を目視するか、
-他人に見てもらうこと。
+アバターが無くても、TV 単体で全文字を目視できる。
+
+1. `crt_tv`（ルートのオブジェクト）に **Animator** を追加する。
+   Avatar は None のままでよい
+2. Project で Create → Animator Controller を作り、1 の Controller 欄に入れる
+3. E の生成スクリプトを実行する。**この Animator があるおかげでパスが解決できる**
+4. F の手順で、その Controller に float `MorseChar` と Motion Time のステートを作る
+5. **Play モードに入り、Animator ウィンドウで `MorseChar` の値を動かす**。
+   0 から 1 まで動かして 55 文字が順に出れば成功。
+   `index / 54` なので 0.0185 刻み。0 は空白、1.0 が `@`
+
+ここまで通れば、あとはアバターへ持っていくだけになる。
+
+**ただし Play モードでも 8bit 量子化は再現されない。** 4-2 のキーずれはここでは
+絶対に出ない。そちらは E の生成スクリプトが Console に出す検算結果で判断すること。
 
 ### 8-4. 検討したが保留にしている案
 

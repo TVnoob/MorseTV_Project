@@ -40,6 +40,7 @@ HTML(送信中の文字) -> app.py / vrc_morse_osc.py -> OSC/UDP 127.0.0.1:9000 
 - `unity_assets/` … Unity へ持っていくもの（TVモデル、グリフアトラス、UV表）
 - `verify_setup.py` … 全体の整合性チェック。作業前に走らせる
 - `CLAUDE.md` … 設計判断と残作業をまとめた引き継ぎ書
+- `UNITY_GUIDE.md` … Unity 側の作業手順（初心者向け・画面操作レベル）
 
 ### 動作確認
 
@@ -47,6 +48,8 @@ HTML(送信中の文字) -> app.py / vrc_morse_osc.py -> OSC/UDP 127.0.0.1:9000 
 .\.venv\Scripts\python.exe verify_setup.py
 .\.venv\Scripts\python.exe vrc_morse_osc.py --demo HELLO WORLD
 ```
+
+- C:\Users\hehua\Documents\GitHub\PythonProject1\.venv\Scripts\python.exe C:\Users\hehua\Documents\GitHub\PythonProject1\vrc_morse_osc.py --demo HELLO WORLD
 
 `verify_setup.py` は VRChat 起動中だと 9000 番が埋まるため OSC の項目だけ
 FAIL する。これは想定内。

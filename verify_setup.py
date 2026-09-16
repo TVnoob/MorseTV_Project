@@ -114,7 +114,8 @@ def _atlas():
     cell = 64
     for i, ch in enumerate(V.CHARSET):
         col, row = i % 8, i // 8
-        ink = any(px[col*cell + x, row*cell + y][3] > 0
+        # 黒背景・白文字の不透明画像なので RGB で見る（アルファは常に 255）
+        ink = any(max(px[col*cell + x, row*cell + y][:3]) > 0
                   for x in range(4, cell-4, 3) for y in range(4, cell-4, 3))
         if ch == " ":
             assert not ink, "cell 0 should be empty"
